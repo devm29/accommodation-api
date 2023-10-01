@@ -90,6 +90,17 @@ class DocumentVersioningTests(APITestCase):
         self.lease.refresh_from_db()
         self.assertEqual(self.lease.status, "Approved")
 
+    def test_a_document_awaiting_review_leaves_the_lease_verdict_alone(self):
+        Document.objects.create(lease=self.lease, name="a.pdf", status="Approved")
+        Document.objects.create(lease=self.lease, name="b.pdf")
+        self.lease.refresh_from_db()
+        self.assertEqual(self.lease.status, Lease.STATUS_APPROVED)
+
+    def test_a_new_lease_with_a_pending_document_stays_a_draft(self):
+        Document.objects.create(lease=self.lease, name="a.pdf")
+        self.lease.refresh_from_db()
+        self.assertEqual(self.lease.status, Lease.STATUS_DRAFT)
+
     def test_num_of_docs_counts_documents(self):
         self.assertEqual(self.lease.num_of_docs(), 0)
         Document.objects.create(lease=self.lease, name="a.pdf")

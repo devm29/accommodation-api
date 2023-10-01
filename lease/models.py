@@ -90,9 +90,15 @@ class Document(models.Model):
             self.version = (last_document.version + 1) if last_document else 1
         super().save(*args, **kwargs)
 
-        # The lease reflects the status of its newest document.
+        # The lease reflects the verdict on its newest document. "Pending" is
+        # not a lease status: copying it wrote a value outside
+        # Lease.STATUS_CHOICES, so a lease awaiting review matched no filter.
         latest_document = Document.objects.filter(lease=self.lease).order_by("-version").first()
-        if latest_document and latest_document.status != self.lease.status:
+        if (
+            latest_document
+            and latest_document.status in dict(Lease.STATUS_CHOICES)
+            and latest_document.status != self.lease.status
+        ):
             self.lease.status = latest_document.status
             self.lease.save(update_fields=["status", "updated_at"])
 
