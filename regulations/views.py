@@ -59,21 +59,21 @@ class RegulationsViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
         regulation = services.create_regulation(
             user=request.user, search=serializer.validated_data["search"]
         )
-        body = self.get_serializer(regulation).data
-        code = (
-            status.HTTP_201_CREATED
-            if regulation.analysis_state == Regulations.STATE_COMPLETE
-            else status.HTTP_202_ACCEPTED
-        )
-        return Response(body, status=code)
+        return self._answer(regulation, answered=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="reanalyze")
     def reanalyze(self, request, pk=None):
-        """Re-run the lookup for one saved search, ignoring the cache."""
-        regulation = self.get_object()
-        services.clear_cached_answer(regulation.search)
-        services.run_analysis(regulation)
-        return Response(self.get_serializer(regulation).data, status=status.HTTP_200_OK)
+        """Look this search up again, ignoring the cache: 200 if answered, 202 if queued."""
+        regulation = services.reanalyze_regulation(self.get_object())
+        return self._answer(regulation, answered=status.HTTP_200_OK)
+
+    def _answer(self, regulation, *, answered):
+        code = (
+            answered
+            if regulation.analysis_state == Regulations.STATE_COMPLETE
+            else status.HTTP_202_ACCEPTED
+        )
+        return Response(self.get_serializer(regulation).data, status=code)
 
     @action(detail=True, methods=["post"], url_path="chat")
     def chat_with_gpt(self, request, pk=None):

@@ -96,15 +96,23 @@ def create_regulation(*, user, search: str, chain: Optional[RegulationSourceChai
         apply_payload(regulation, cached)
         return regulation
 
-    # Only the free, local sources are allowed to answer inline; anything that
-    # makes a network call is queued.
-    finding = _try_offline_sources(search, chain=chain)
-    if finding is not None:
-        apply_finding(regulation, finding)
-        return regulation
+    return _answer_offline_or_enqueue(regulation, chain=chain)
 
-    _enqueue(regulation.pk)
-    return regulation
+
+def reanalyze_regulation(
+    regulation: Regulations, *, chain: Optional[RegulationSourceChain] = None
+) -> Regulations:
+    """
+    Forget the cached answer for this location and look again.
+
+    Routed like a new search. The reanalyze action used to call
+    ``run_analysis`` inline, putting a model call back inside the request
+    that ``create_regulation`` had been rebuilt to avoid.
+    """
+    clear_cached_answer(regulation.search)
+    regulation.analysis_state = Regulations.STATE_PENDING
+    regulation.save(update_fields=["analysis_state"])
+    return _answer_offline_or_enqueue(regulation, chain=chain)
 
 
 def run_analysis(regulation: Regulations, *, chain: Optional[RegulationSourceChain] = None) -> dict:
@@ -197,6 +205,20 @@ def chat_history_payload(regulation: Regulations) -> dict:
         "analysis_state": regulation.analysis_state,
         "source": regulation.source,
     }
+
+
+def _answer_offline_or_enqueue(
+    regulation: Regulations, *, chain: Optional[RegulationSourceChain]
+) -> Regulations:
+    # Only the free, local sources are allowed to answer inline; anything that
+    # makes a network call is queued.
+    finding = _try_offline_sources(regulation.search, chain=chain)
+    if finding is not None:
+        apply_finding(regulation, finding)
+        return regulation
+
+    _enqueue(regulation.pk)
+    return regulation
 
 
 def _try_offline_sources(search: str, *, chain: Optional[RegulationSourceChain]):

@@ -12,6 +12,8 @@ installed through the same registry the application uses, so these tests run
 the real prompts, the real parsing and the real writes.
 """
 
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import SimpleTestCase, override_settings
@@ -280,6 +282,30 @@ class LookupRoutingTests(APITestCase):
         url = reverse("regulations-reanalyze", kwargs={"pk": created.data["id"]})
         with use_provider(ScriptedProvider("SHORT TERM RENTAL NOT ALLOWED.")):
             response = self.client.post(url)
+        # Queued like a new search. Tasks run inline under test, so the row
+        # already holds the fresh answer when the client polls it.
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data["analysis_state"], "pending")
+        detail = self.client.get(reverse("regulations-detail", kwargs={"pk": created.data["id"]}))
+        self.assertEqual(detail.data["status"], "STR Not Allowed")
+
+    @override_settings(REGULATION_SOURCES=["llm"])
+    @patch("regulations.services._enqueue")
+    def test_reanalyze_does_not_call_the_model_inside_the_request(self, enqueue):
+        regulation = Regulations.objects.create(user=self.user, search="Boise, ID")
+        provider = ScriptedProvider("SHORT TERM RENTAL ALLOWED.")
+        with use_provider(provider):
+            response = self.client.post(
+                reverse("regulations-reanalyze", kwargs={"pk": regulation.pk})
+            )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(provider.calls, [])
+        enqueue.assert_called_once_with(regulation.pk)
+
+    @override_settings(REGULATION_SOURCES=["curated", "llm"])
+    def test_reanalyzing_a_curated_city_answers_inside_the_request(self):
+        regulation = Regulations.objects.create(user=self.user, search="New York, NY")
+        response = self.client.post(reverse("regulations-reanalyze", kwargs={"pk": regulation.pk}))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["status"], "STR Not Allowed")
 
