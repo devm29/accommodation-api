@@ -1,4 +1,3 @@
-# bnbu_backend_api/account/serializers.py
 import secrets
 
 from django.contrib.auth import get_user_model
@@ -6,7 +5,6 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from rest_framework import serializers
 
-# Get the CustomUser model
 CustomUser = get_user_model()
 
 
@@ -28,45 +26,16 @@ class UserSerializer(serializers.ModelSerializer):
             "is_active",
             "is_first_login",
         ]
-        read_only_fields = [
-            "id",
-            "is_active",
-            "is_first_login",
-        ]  # These fields cannot be updated via the serializer
+        read_only_fields = ["id", "is_active", "is_first_login"]
 
     def create(self, validated_data):
-        """
-        Create a new user with a secure temporary password and mark as first login.
-        A cryptographically secure random password is generated when no explicit
-        password is provided so that newly created accounts never share a hard-coded
-        default credential.
-        """
-        password = validated_data.pop("password", None)
-        if not password:
-            # Generate a random password instead of using a predictable default.
-            password = secrets.token_urlsafe(16)
-
+        # The API never takes a password for a new account. It gets an
+        # unguessable one, and the user sets their own through the reset flow.
         user = CustomUser(**validated_data)
-        user.set_password(password)
+        user.set_password(secrets.token_urlsafe(16))
         user.is_first_login = True
         user.save()
         return user
-
-    def update(self, instance, validated_data):
-        """Update user information and optionally change the password."""
-        password = validated_data.pop("password", None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        if password:
-            instance.set_password(password)  # Update password if provided
-        instance.is_first_login = False  # Reset after password change
-        instance.save()
-        return instance
-
-
-# class ClientSerializer(UserSerializer):
-#     class Meta(UserSerializer.Meta):
-#         fields = ['id', 'email', 'user_type']  # Limit fields for clients
 
 
 class CustomerSerializer(UserSerializer):
@@ -81,7 +50,7 @@ class CustomerSerializer(UserSerializer):
             "is_active",
             "is_first_login",
             "client",
-        ]  # Include client field for customers
+        ]
 
 
 class PasswordChangeSerializer(serializers.Serializer):
@@ -129,12 +98,6 @@ class PasswordResetSerializer(serializers.Serializer):
 
     email = serializers.EmailField(required=True)
 
-    def validate_email(self, value):
-        """Validate the email for existing users."""
-        if not CustomUser.objects.filter(email=value).exists():
-            raise serializers.ValidationError("User with this email does not exist.")
-        return value
-
 
 class FirstTimePasswordUpdateSerializer(serializers.ModelSerializer):
     """
@@ -155,8 +118,10 @@ class FirstTimePasswordUpdateSerializer(serializers.ModelSerializer):
 
         if new_password != confirm_password:
             raise serializers.ValidationError("Passwords do not match.")
-
-        # Additional validations for password complexity can be added here
+        try:
+            validate_password(new_password, user=self.instance)
+        except ValidationError as exc:
+            raise serializers.ValidationError({"new_password": exc.messages})
         return data
 
     def save(self, **kwargs):

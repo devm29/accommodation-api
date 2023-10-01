@@ -127,19 +127,21 @@ class CustomerCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, client_id):
+        is_admin = request.user.user_type == "admin"
+        if not (is_admin or request.user.user_type == "client"):
+            raise PermissionDenied("Only clients and admins can create customers.")
+
         # request.data is an immutable QueryDict for form-encoded posts.
         data = request.data.copy()
-        # An admin names the client; anyone else always gets themselves.
-        data["client"] = client_id if request.user.user_type == "admin" else request.user.id
-
-        if not data.get("client"):
-            return Response({"error": "Client ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+        # An admin names the client; a client always gets themselves.
+        data["client"] = client_id if is_admin else request.user.id
 
         serializer = CustomerSerializer(data=data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        # The body's user_type is ignored: this route creates customers, and
+        # trusting it let a client mint an "admin" account under itself.
+        serializer.save(user_type="customer")
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class CustomerDetailView(RetrieveUpdateDestroyAPIView):
@@ -158,10 +160,20 @@ class CustomerDetailView(RetrieveUpdateDestroyAPIView):
             raise PermissionDenied("You do not have permission to access this customer.")
         return customer
 
-    def put(self, request, *args, **kwargs):
-        serializer = self.get_serializer(self.get_object(), data=request.data)
+    def update(self, request, *args, **kwargs):
+        customer = self.get_object()
+        serializer = self.get_serializer(
+            customer, data=request.data, partial=kwargs.get("partial", False)
+        )
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        # A customer stays a customer, and only an admin may move it to
+        # another client. PUT and PATCH both used to accept user_type and
+        # client from the body, so a client could promote its own customer
+        # to "admin" and read every other client's customers.
+        client = customer.client
+        if self.request.user.user_type == "admin":
+            client = serializer.validated_data.get("client", client)
+        serializer.save(user_type="customer", client=client)
         return Response({"message": "Customer updated successfully"}, status=status.HTTP_200_OK)
 
     def delete(self, request, *args, **kwargs):
@@ -265,9 +277,13 @@ def password_reset(request):
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    if not services.send_password_reset(serializer.validated_data["email"]):
-        return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-    return Response({"message": "Password reset email sent"}, status=status.HTTP_200_OK)
+    # The same answer whether or not the account exists, so the endpoint
+    # cannot be used to find out which addresses are registered.
+    services.send_password_reset(serializer.validated_data["email"])
+    return Response(
+        {"message": "If that address has an account, a reset link is on its way."},
+        status=status.HTTP_200_OK,
+    )
 
 
 @api_view(["GET"])

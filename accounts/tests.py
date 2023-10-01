@@ -68,6 +68,16 @@ class FirstTimePasswordUpdateTests(APITestCase):
         self.assertFalse(self.user.is_first_login)
         self.assertTrue(self.user.check_password("NewSecurePass!123"))
 
+    def test_a_weak_first_password_is_refused(self):
+        self.client.force_authenticate(user=self.user)
+        url = reverse("update-password", kwargs={"pk": self.user.pk})
+        response = self.client.post(
+            url, {"new_password": "12345678", "confirm_password": "12345678"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_first_login)
+
     def test_user_cannot_update_other_users_password(self):
         self.client.force_authenticate(user=self.other_user)
         url = reverse("update-password", kwargs={"pk": self.user.pk})
@@ -158,9 +168,14 @@ class PasswordResetTests(APITestCase):
         self.assertEqual(message.from_email, settings.DEFAULT_FROM_EMAIL)
         self.assertEqual(message.to, [self.user.email])
 
-    def test_an_unknown_address_is_rejected_without_sending_mail(self):
-        response = self.client.post(self.url, {"email": "nobody@example.com"}, format="json")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+    def test_an_unknown_address_gets_the_same_answer_and_no_mail(self):
+        # A 404 here told anyone which addresses have accounts.
+        known = self.client.post(self.url, {"email": self.user.email}, format="json")
+        mail.outbox.clear()
+        unknown = self.client.post(self.url, {"email": "nobody@example.com"}, format="json")
+
+        self.assertEqual(unknown.status_code, status.HTTP_200_OK)
+        self.assertEqual(unknown.data, known.data)
         self.assertEqual(len(mail.outbox), 0)
 
     def test_a_malformed_address_is_rejected(self):
@@ -400,3 +415,95 @@ class AdminOnlyEndpointTests(APITestCase):
         response = self.client.get(reverse("user-profile"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["email"], self.member.email)
+
+
+class CustomerPrivilegeTests(APITestCase):
+    """A client manages its customers; it must not be able to make admins."""
+
+    def setUp(self):
+        self.client_user = CustomUser.objects.create_user(
+            email="priv-client@example.com", password="Pass!12345", user_type="client"
+        )
+        self.other_client = CustomUser.objects.create_user(
+            email="priv-other@example.com", password="Pass!12345", user_type="client"
+        )
+        self.customer = CustomUser.objects.create_user(
+            email="priv-customer@example.com",
+            password="Pass!12345",
+            user_type="customer",
+            client=self.client_user,
+        )
+        self.detail_url = reverse(
+            "customer-detail", kwargs={"client_id": self.client_user.pk, "pk": self.customer.pk}
+        )
+
+    def test_a_client_cannot_create_an_admin_through_the_customer_route(self):
+        self.client.force_authenticate(user=self.client_user)
+        response = self.client.post(
+            reverse("customer-create", kwargs={"client_id": self.client_user.pk}),
+            {"email": "sneaky@example.com", "user_type": "admin"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(CustomUser.objects.get(email="sneaky@example.com").user_type, "customer")
+
+    def test_a_client_cannot_promote_its_customer_with_put(self):
+        self.client.force_authenticate(user=self.client_user)
+        response = self.client.put(
+            self.detail_url,
+            {"email": self.customer.email, "user_type": "admin"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.user_type, "customer")
+
+    def test_a_client_cannot_promote_or_move_its_customer_with_patch(self):
+        self.client.force_authenticate(user=self.client_user)
+        response = self.client.patch(
+            self.detail_url,
+            {"user_type": "admin", "client": self.other_client.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.user_type, "customer")
+        self.assertEqual(self.customer.client, self.client_user)
+
+    def test_an_admin_can_move_a_customer_to_another_client(self):
+        admin = CustomUser.objects.create_superuser(email="priv-admin@example.com", password="x")
+        self.client.force_authenticate(user=admin)
+        response = self.client.patch(
+            self.detail_url, {"client": self.other_client.pk}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.customer.refresh_from_db()
+        self.assertEqual(self.customer.client, self.other_client)
+
+    def test_a_customer_cannot_create_customers(self):
+        self.client.force_authenticate(user=self.customer)
+        response = self.client.post(
+            reverse("customer-create", kwargs={"client_id": self.customer.pk}),
+            {"email": "child@example.com"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(CustomUser.objects.filter(email="child@example.com").exists())
+
+
+class UserUpdateTests(APITestCase):
+    def test_editing_a_profile_does_not_end_the_first_login(self):
+        # The serializer used to clear is_first_login on every admin edit,
+        # so renaming a new user skipped their forced password change.
+        admin = CustomUser.objects.create_superuser(email="upd-admin@example.com", password="x")
+        user = CustomUser.objects.create_user(email="upd-user@example.com", user_type="client")
+        self.client.force_authenticate(user=admin)
+
+        response = self.client.patch(
+            reverse("user-detail", kwargs={"pk": user.pk}), {"first_name": "Ada"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertEqual(user.first_name, "Ada")
+        self.assertTrue(user.is_first_login)

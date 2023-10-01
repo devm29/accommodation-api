@@ -1,4 +1,3 @@
-# bnbu_backend_api/account/models.py
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 
@@ -42,14 +41,12 @@ class CustomUser(AbstractUser):
     user_type = models.CharField(max_length=50, choices=USER_TYPE_CHOICES, default="admin")
     is_first_login = models.BooleanField(default=True)
 
-    # Remove the username field, replace it with email
     username = None
-    email = models.EmailField(unique=True)  # Set email as unique
+    email = models.EmailField(unique=True)
 
-    USERNAME_FIELD = "email"  # Use email for authentication
-    REQUIRED_FIELDS = []  # Remove username from required fields
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = []
 
-    # Foreign key to link customers to clients
     client = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,
