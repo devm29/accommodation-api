@@ -55,6 +55,16 @@ else:
         for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,0.0.0.0").split(",")
     ]
 
+if IS_DEPLOYED:
+    # TLS ends at the platform's proxy, which reports the original scheme.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = _flag("SECURE_SSL_REDIRECT", True)
+    # The container healthcheck calls these over plain HTTP from inside.
+    SECURE_REDIRECT_EXEMPT = [r"^api/health/$", r"^api/ready/$"]
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "3600"))
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 
 # ---------------------------------------------------------------------------
 # Applications
