@@ -7,6 +7,7 @@ ownership scoping that keeps one account's data out of another's, and the
 readiness endpoint the container healthcheck calls.
 """
 
+from datetime import date
 from io import StringIO
 
 from django.contrib.auth import get_user_model
@@ -16,6 +17,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from bnbu_core.dates import InvalidDay, day_range, parse_day
 from bnbu_core.json_utils import as_mapping, first_json_object
 from bnbu_core.llm import (
     LLMUnavailable,
@@ -274,3 +276,16 @@ class SeedDemoCommandTests(TestCase):
         self._seed()
         self.assertEqual(RentalProperty.objects.count(), 8)
         self.assertEqual(CustomUser.objects.filter(email="admin@bnbu.test").count(), 1)
+
+
+class DayRangeTests(SimpleTestCase):
+    def test_the_end_bound_is_the_following_midnight_and_exclusive(self):
+        lookups = day_range(date(2026, 3, 1), date(2026, 3, 16))
+
+        self.assertEqual(set(lookups), {"created_at__gte", "created_at__lt"})
+        self.assertEqual(lookups["created_at__gte"].isoformat(), "2026-03-01T00:00:00+00:00")
+        self.assertEqual(lookups["created_at__lt"].isoformat(), "2026-03-17T00:00:00+00:00")
+
+    def test_an_unparseable_day_names_the_bound(self):
+        with self.assertRaisesMessage(InvalidDay, "Invalid end date format"):
+            parse_day("16/03/2026", "end")

@@ -58,13 +58,11 @@ def _is_unknown(value) -> bool:
 
 
 def validate_file_type(file):
-    if not file.name.endswith(tuple(constants.VALID_FILE_EXTENSION)):
-        return False
-    return True
+    return file.name.lower().endswith(tuple(constants.VALID_FILE_EXTENSION))
 
 
 def file_to_df(file):
-    if file.name.endswith(".csv"):
+    if file.name.lower().endswith(".csv"):
         df = pd.read_csv(file)
     else:
         df = pd.read_excel(file)
@@ -79,8 +77,11 @@ def validate_df(df):
 
 
 def normalize_column(df, col_name):
-    # df[col_name] = df[col_name].astype(str).str.extract('(\d+)').astype(float)
-    df[col_name] = df[col_name].astype(str).str.extract(r"(\d+)").astype(float)
+    # Thousands separators go first: Zillow exports "1,769 sqft", and the
+    # first run of digits in that is "1".
+    df[col_name] = (
+        df[col_name].astype(str).str.replace(",", "", regex=False).str.extract(r"(\d+)")
+    ).astype(float)
 
 
 def normalize_df(df):

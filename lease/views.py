@@ -10,7 +10,6 @@ call.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
 
 from django.db.models import Count, Prefetch, Q
 from django.shortcuts import get_object_or_404
@@ -22,6 +21,7 @@ from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from bnbu_core.dates import InvalidDay, filter_by_days
 from bnbu_core.mixins import OwnerScopedQuerysetMixin, resolve_detail_pk
 from bnbu_core.pagination import DefaultPagination
 from bnbu_core.permissions import IsAdminOrOwnData, IsSpecificUserType
@@ -129,39 +129,17 @@ class LeaseViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
         if address:
             leases = leases.filter(Q(address1__icontains=address) | Q(address2__icontains=address))
 
-        start_date = request.query_params.get("start_date")
-        if start_date:
-            parsed = _parse_date(start_date)
-            if parsed is None:
-                return Response(
-                    {"detail": "Invalid start date format. Use YYYY-MM-DD."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            leases = leases.filter(created_at__gte=parsed)
-
-        end_date = request.query_params.get("end_date")
-        if end_date:
-            parsed = _parse_date(end_date)
-            if parsed is None:
-                return Response(
-                    {"detail": "Invalid end date format. Use YYYY-MM-DD."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            leases = leases.filter(created_at__lte=parsed + timedelta(days=1))
+        try:
+            leases = filter_by_days(leases, request.query_params)
+        except InvalidDay as exc:
+            return Response({"detail": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
 
         status_value = request.query_params.get("status")
         if status_value:
             leases = leases.filter(status=status_value)
 
         page = self.paginate_queryset(leases)
-        if page is not None:
-            return self.get_paginated_response(self.get_serializer(page, many=True).data)
-
-        serializer = self.get_serializer(leases, many=True)
-        return Response(
-            serializer.data if leases.exists() else {"detail": "No leases found."},
-            status=status.HTTP_200_OK,
-        )
+        return self.get_paginated_response(self.get_serializer(page, many=True).data)
 
 
 class DocumentViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
@@ -232,6 +210,15 @@ class DocumentViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
             return Response(
                 {"detail": "No document IDs provided."}, status=status.HTTP_400_BAD_REQUEST
             )
+        # A string here was iterated character by character, and a non-numeric
+        # id reached the ORM and came back as a 500.
+        if not isinstance(document_ids, list) or not all(
+            isinstance(value, int) and not isinstance(value, bool) for value in document_ids
+        ):
+            return Response(
+                {"detail": "document_ids must be a list of integers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Scoped lookup: this used to accept any document id in the system.
         documents = [
@@ -275,10 +262,3 @@ class DocumentViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(payload, status=status.HTTP_200_OK)
-
-
-def _parse_date(value: str):
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    except (TypeError, ValueError):
-        return None

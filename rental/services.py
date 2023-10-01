@@ -8,7 +8,6 @@ of the CSV writer. Both live here now, so a new filter is added once.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
 from typing import Iterator
 
 from django.db.models import Max, Q, QuerySet
@@ -22,6 +21,7 @@ from bnbu_constants.utility import (
     validate_df,
     validate_file_type,
 )
+from bnbu_core.dates import InvalidDay, day_range, parse_day
 
 from .models import RentalProperty
 from .tasks import process_rental_properties_task
@@ -119,14 +119,13 @@ def build_filter(filters) -> Q:
         query &= Q(batch_id=filters["batch_id"])
 
     start_date = filters.get("start_date")
-    if start_date:
-        query &= Q(created_at__gte=_parse_date(start_date, "start"))
-
     end_date = filters.get("end_date")
-    if end_date:
-        # Exclusive end: the caller means "up to and including that day".
-        query &= Q(created_at__lte=_parse_date(end_date, "end") + timedelta(days=1))
-
+    query &= Q(
+        **day_range(
+            _parse_date(start_date, "start") if start_date else None,
+            _parse_date(end_date, "end") if end_date else None,
+        )
+    )
     return query
 
 
@@ -155,6 +154,6 @@ def _csv_cell(value: str) -> str:
 
 def _parse_date(value, label: str):
     try:
-        return datetime.strptime(value, DATE_FORMAT).date()
-    except (TypeError, ValueError) as exc:
-        raise RentalValidationError(f"Invalid {label} date format. {DATE_HINT}") from exc
+        return parse_day(value, label, DATE_FORMAT, DATE_HINT)
+    except InvalidDay as exc:
+        raise RentalValidationError(exc.detail) from exc

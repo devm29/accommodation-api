@@ -201,12 +201,13 @@ class ProcessAirdnaApiTests(SimpleTestCase):
 
 class FileValidationTests(SimpleTestCase):
     def test_accepted_extensions(self):
-        for name in ["listings.csv", "listings.xlsx", "listings.xls"]:
+        for name in ["listings.csv", "listings.xlsx", "LISTINGS.XLSX"]:
             with self.subTest(name=name):
                 self.assertTrue(validate_file_type(SimpleUploadedFile(name, b"")))
 
     def test_rejected_extensions(self):
-        for name in ["listings.pdf", "listings", "listings.csv.exe"]:
+        # .xls needs an engine that is not installed, so it is refused up front.
+        for name in ["listings.pdf", "listings", "listings.csv.exe", "listings.xls"]:
             with self.subTest(name=name):
                 self.assertFalse(validate_file_type(SimpleUploadedFile(name, b"")))
 
@@ -237,6 +238,11 @@ class FileValidationTests(SimpleTestCase):
         df = pd.DataFrame({"Br": ["2 bd", "3", None]})
         normalize_column(df, "Br")
         self.assertEqual(df["Br"].tolist()[:2], [2.0, 3.0])
+
+    def test_normalize_column_reads_through_thousands_separators(self):
+        df = pd.DataFrame({"Sq. ft.": ["1,769 sqft", "3,323 sqft", "980 sqft"]})
+        normalize_column(df, "Sq. ft.")
+        self.assertEqual(df["Sq. ft."].tolist(), [1769.0, 3323.0, 980.0])
 
 
 class RentalPropertyAccessTests(APITestCase):

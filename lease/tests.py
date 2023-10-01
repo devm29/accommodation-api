@@ -9,6 +9,8 @@ DocumentViewSet used to look documents up by bare id against the whole table.
 """
 
 import json
+from datetime import datetime
+from datetime import timezone as dt_timezone
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -206,6 +208,15 @@ class DocumentAccessScopeTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_review_rejects_ids_that_are_not_a_list_of_integers(self):
+        self.client.force_authenticate(user=self.owner)
+        for body in ({"document_ids": "12"}, {"document_ids": ["abc"]}, {"document_ids": 5}):
+            with self.subTest(body=body):
+                response = self.client.post(
+                    reverse("document-review-documents"), body, format="json"
+                )
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_review_requires_document_ids(self):
         self.client.force_authenticate(user=self.owner)
         response = self.client.post(reverse("document-review-documents"), {}, format="json")
@@ -241,6 +252,27 @@ class LeaseScopeTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         addresses = [row["address1"] for row in response.data["results"]]
         self.assertEqual(addresses, ["100 Pine St"])
+
+    def test_search_end_date_covers_that_whole_day_and_no_more(self):
+        late = make_lease(self.owner, address1="300 Pine St")
+        next_midnight = make_lease(self.owner, address1="400 Pine St")
+        Lease.objects.filter(pk=late.pk).update(
+            created_at=datetime(2026, 3, 16, 23, 59, tzinfo=dt_timezone.utc)
+        )
+        Lease.objects.filter(pk=next_midnight.pk).update(
+            created_at=datetime(2026, 3, 17, 0, 0, tzinfo=dt_timezone.utc)
+        )
+        Lease.objects.filter(pk=self.own_lease.pk).update(
+            created_at=datetime(2026, 3, 15, 12, 0, tzinfo=dt_timezone.utc)
+        )
+        self.client.force_authenticate(user=self.owner)
+
+        response = self.client.get(
+            reverse("lease-search"), {"start_date": "2026-03-16", "end_date": "2026-03-16"}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([row["address1"] for row in response.data["results"]], ["300 Pine St"])
 
     def test_search_rejects_a_malformed_start_date(self):
         self.client.force_authenticate(user=self.owner)

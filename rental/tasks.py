@@ -10,7 +10,6 @@ does what happens when a chunk fails, which is where this used to go wrong.
 from __future__ import absolute_import, unicode_literals
 
 import logging
-from datetime import datetime
 from io import StringIO
 
 import pandas as pd
@@ -171,8 +170,6 @@ def _store_row(row, *, user_id, batch_id):
         monthly_estimated_profit=_number(row.get("monthly_estimated_profit")),
         batch_id=batch_id,
         property_status=row["property_status"],
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
     )
     prop.yearly_rent_cost_util = calculate_monthly_profit(
         prop.yearly_projected_revenue, prop.rent, prop.no_of_bedrooms

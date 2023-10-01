@@ -9,7 +9,6 @@ in this file. They now live in :mod:`regulations.services` and
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
 
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -19,6 +18,7 @@ from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from bnbu_core.dates import InvalidDay, filter_by_days
 from bnbu_core.mixins import OwnerScopedQuerysetMixin, resolve_detail_pk
 from bnbu_core.pagination import DefaultPagination
 from bnbu_core.permissions import IsAdminOrOwnData, IsSpecificUserType
@@ -109,43 +109,14 @@ class RegulationsViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
         if query:
             regulations = regulations.filter(search__icontains=query)
 
-        start_date = request.query_params.get("start_date")
-        if start_date:
-            parsed = _parse_date(start_date)
-            if parsed is None:
-                return Response(
-                    {"detail": "Invalid start date format. Use YYYY-MM-DD."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            regulations = regulations.filter(created_at__gte=parsed)
-
-        end_date = request.query_params.get("end_date")
-        if end_date:
-            parsed = _parse_date(end_date)
-            if parsed is None:
-                return Response(
-                    {"detail": "Invalid end date format. Use YYYY-MM-DD."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            regulations = regulations.filter(created_at__lte=parsed + timedelta(days=1))
+        try:
+            regulations = filter_by_days(regulations, request.query_params)
+        except InvalidDay as exc:
+            return Response({"detail": exc.detail}, status=status.HTTP_400_BAD_REQUEST)
 
         status_value = request.query_params.get("status")
         if status_value:
             regulations = regulations.filter(status=status_value)
 
         page = self.paginate_queryset(regulations)
-        if page is not None:
-            return self.get_paginated_response(self.get_serializer(page, many=True).data)
-
-        serializer = self.get_serializer(regulations, many=True)
-        return Response(
-            serializer.data if regulations.exists() else {"detail": "No regulations found."},
-            status=status.HTTP_200_OK,
-        )
-
-
-def _parse_date(value: str):
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    except (TypeError, ValueError):
-        return None
+        return self.get_paginated_response(self.get_serializer(page, many=True).data)
