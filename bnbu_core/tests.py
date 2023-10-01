@@ -7,9 +7,13 @@ ownership scoping that keeps one account's data out of another's, and the
 readiness endpoint the container healthcheck calls.
 """
 
+import json
 from datetime import date
 from io import StringIO
+from types import SimpleNamespace
 
+import httpx2 as httpx  # the transport the pinned openai SDK is built on
+import openai
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -20,6 +24,8 @@ from rest_framework.test import APITestCase
 from bnbu_core.dates import InvalidDay, day_range, parse_day
 from bnbu_core.json_utils import as_mapping, first_json_object
 from bnbu_core.llm import (
+    LLMError,
+    LLMRateLimited,
     LLMUnavailable,
     Message,
     Purpose,
@@ -136,11 +142,128 @@ class OpenAIProviderTests(SimpleTestCase):
         with self.assertRaises(LLMUnavailable):
             OpenAIProvider(api_key=None).complete([Message("user", "hi")])
 
-    def test_a_purpose_can_route_to_a_different_model(self):
+    def test_a_purpose_routes_to_its_override_model(self):
+        client = FakeOpenAIClient([fake_chat_response("ok"), fake_chat_response("ok")])
         provider = OpenAIProvider(
-            api_key="sk-test", model="gpt-4", model_overrides={"lease_chat": "gpt-4o-mini"}
+            api_key="sk-test",
+            model="gpt-4",
+            model_overrides={"lease_chat": "gpt-4o-mini"},
+            client=client,
         )
-        self.assertEqual(provider.model_overrides["lease_chat"], "gpt-4o-mini")
+        provider.complete([Message("user", "hi")], purpose=Purpose.LEASE_CHAT)
+        provider.complete([Message("user", "hi")], purpose=Purpose.LEASE_ANALYSIS)
+        self.assertEqual([call["model"] for call in client.calls], ["gpt-4o-mini", "gpt-4"])
+
+    def test_a_response_becomes_a_completion(self):
+        client = FakeOpenAIClient([fake_chat_response("  The answer.  ", created=1767225600)])
+        provider = OpenAIProvider(api_key="sk-test", client=client)
+
+        completion = provider.complete(
+            [Message("system", "be brief"), {"role": "user", "content": "hi"}],
+            temperature=0.2,
+            max_tokens=50,
+        )
+
+        self.assertEqual(completion.text, "The answer.")
+        self.assertEqual(completion.provider, "openai")
+        self.assertEqual(completion.created_at_iso, "2026-01-01T00:00:00+00:00")
+        self.assertEqual(
+            client.calls[0]["messages"],
+            [{"role": "system", "content": "be brief"}, {"role": "user", "content": "hi"}],
+        )
+        self.assertEqual(client.calls[0]["temperature"], 0.2)
+        self.assertEqual(client.calls[0]["max_tokens"], 50)
+
+    def test_a_rate_limit_is_retried_then_reported(self):
+        client = FakeOpenAIClient([openai_error(429)] * 2 + [fake_chat_response("finally")])
+        provider = OpenAIProvider(api_key="sk-test", backoff_seconds=0, client=client)
+        self.assertEqual(provider.complete([Message("user", "hi")]).text, "finally")
+
+        stubborn = FakeOpenAIClient([openai_error(429)] * 3)
+        provider = OpenAIProvider(api_key="sk-test", backoff_seconds=0, client=stubborn)
+        with self.assertRaises(LLMRateLimited):
+            provider.complete([Message("user", "hi")])
+        self.assertEqual(len(stubborn.calls), 3)
+
+    def test_the_real_sdk_client_round_trips_offline(self):
+        # Exercises the installed SDK's request building and response parsing
+        # against a canned HTTP reply; nothing leaves the process.
+        seen = {}
+
+        def handler(request):
+            seen["path"] = request.url.path
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl-1",
+                    "object": "chat.completion",
+                    "created": 1767225600,
+                    "model": "gpt-4o-mini",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": "Allowed."},
+                        }
+                    ],
+                },
+            )
+
+        client = openai.OpenAI(
+            api_key="sk-test",
+            max_retries=0,
+            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+        provider = OpenAIProvider(api_key="sk-test", model="gpt-4o-mini", client=client)
+
+        completion = provider.complete([Message("user", "Is it allowed?")])
+
+        self.assertEqual(seen["path"], "/v1/chat/completions")
+        self.assertEqual(seen["body"]["messages"], [{"role": "user", "content": "Is it allowed?"}])
+        self.assertEqual(completion.text, "Allowed.")
+        self.assertEqual(completion.model, "gpt-4o-mini")
+
+    def test_other_vendor_failures_become_llm_errors_without_a_retry(self):
+        client = FakeOpenAIClient([openai_error(401), fake_chat_response("unused")])
+        provider = OpenAIProvider(api_key="sk-test", backoff_seconds=0, client=client)
+        with self.assertRaises(LLMError) as caught:
+            provider.complete([Message("user", "hi")])
+        self.assertNotIsInstance(caught.exception, LLMRateLimited)
+        self.assertEqual(len(client.calls), 1)
+
+
+def fake_chat_response(text, created=None):
+    message = SimpleNamespace(content=text)
+    return SimpleNamespace(
+        id="chatcmpl-test",
+        model="gpt-test",
+        created=created,
+        choices=[SimpleNamespace(message=message)],
+    )
+
+
+def openai_error(status_code):
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    response = httpx.Response(status_code, request=request)
+    error_class = openai.RateLimitError if status_code == 429 else openai.AuthenticationError
+    return error_class(f"HTTP {status_code}", response=response, body=None)
+
+
+class FakeOpenAIClient:
+    """Stands in for openai.OpenAI: answers or raises from a script, in order."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def _create(self, **payload):
+        self.calls.append(payload)
+        outcome = self.script.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
 
 class DemoProviderTests(SimpleTestCase):

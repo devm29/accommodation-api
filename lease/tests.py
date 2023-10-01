@@ -11,7 +11,7 @@ DocumentViewSet used to look documents up by bare id against the whole table.
 import json
 from datetime import datetime
 from datetime import timezone as dt_timezone
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase
@@ -22,7 +22,12 @@ from rest_framework.test import APITestCase
 from bnbu_core.json_utils import as_mapping as _as_mapping
 from bnbu_core.llm import Completion, LLMError
 from bnbu_core.testing import ScriptedProvider, use_provider
-from lease.analysis import LeaseAnalysisError, parse_completion, verdict_from_prose
+from lease.analysis import (
+    LeaseAnalysisError,
+    extract_text_chunks,
+    parse_completion,
+    verdict_from_prose,
+)
 from lease.models import Document, Lease
 from lease.tasks import analyze_document_task
 
@@ -349,16 +354,14 @@ class StructuredAnalysisTests(SimpleTestCase):
         return parse_completion(Completion(text=text, model="m", provider="p"), pages=3)
 
     def test_a_json_answer_becomes_a_structured_result(self):
-        analysis = self._parse(
-            """
+        analysis = self._parse("""
             Here you go:
             {"verdict": "Rejected", "confidence": 0.9, "summary": "No subletting.",
              "financials": {"monthly_rent": "$2,450", "security_deposit": 4900},
              "clauses": [{"type": "subletting", "excerpt": "no subletting",
                           "risk": "high", "finding": "blocks the strategy",
                           "confidence": 0.95}]}
-            """
-        )
+            """)
         self.assertTrue(analysis.structured)
         self.assertEqual(analysis.verdict, "Rejected")
         self.assertEqual(analysis.confidence, 0.9)
@@ -522,3 +525,64 @@ def _analysis(*, verdict, summary):
             provider="scripted",
         )
     )
+
+
+def text_pdf(*pages):
+    """A minimal PDF with one line of text per page, built without a PDF library."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        None,
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    kids = []
+    for text in pages:
+        stream = b"BT /F1 12 Tf 72 720 Td (" + text.encode() + b") Tj ET"
+        objects.append(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream))
+        content_id = len(objects)
+        objects.append(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>" % content_id
+        )
+        kids.append(b"%d 0 R" % len(objects))
+    objects[1] = b"<< /Type /Pages /Kids [%s] /Count %d >>" % (b" ".join(kids), len(kids))
+
+    body = b"%PDF-1.4\n"
+    offsets = []
+    for number, obj in enumerate(objects, start=1):
+        offsets.append(len(body))
+        body += b"%d 0 obj\n%s\nendobj\n" % (number, obj)
+    xref = len(body)
+    body += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    body += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    body += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        xref,
+    )
+    return body
+
+
+class PdfExtractionTests(SimpleTestCase):
+    def _fetch(self, content):
+        response = Mock(content=content)
+        response.raise_for_status.return_value = None
+        return patch("lease.analysis.requests.get", return_value=response)
+
+    def test_text_is_read_five_pages_to_a_chunk(self):
+        pdf = text_pdf(*[f"Clause {number}" for number in range(1, 7)])
+        with self._fetch(pdf):
+            chunks, pages = extract_text_chunks(Mock(file_url="https://files.test/lease.pdf"))
+        self.assertEqual(pages, 6)
+        self.assertEqual(len(chunks), 2)
+        self.assertIn("Clause 1", chunks[0])
+        self.assertIn("Clause 5", chunks[0])
+        self.assertIn("Clause 6", chunks[1])
+
+    def test_a_pdf_with_no_text_is_reported_as_such(self):
+        with self._fetch(text_pdf("")):
+            with self.assertRaisesMessage(LeaseAnalysisError, "No extractable text"):
+                extract_text_chunks(Mock(file_url="https://files.test/scan.pdf"))
+
+    def test_bytes_that_are_not_a_pdf_are_a_lease_analysis_error(self):
+        with self._fetch(b"<html>not a pdf</html>"):
+            with self.assertRaisesMessage(LeaseAnalysisError, "Could not read the PDF"):
+                extract_text_chunks(Mock(file_url="https://files.test/x.pdf"))

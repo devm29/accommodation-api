@@ -3,7 +3,7 @@
 # --- build stage -----------------------------------------------------------
 # Compilers and headers (psycopg2, numpy, pandas) are needed to build the
 # wheels and are not shipped in the runtime image.
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -21,7 +21,7 @@ RUN python -m venv /opt/venv \
 
 
 # --- runtime stage ---------------------------------------------------------
-FROM python:3.11-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

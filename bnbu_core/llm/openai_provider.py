@@ -1,8 +1,7 @@
 """OpenAI-backed provider.
 
-This is the only module in the project that knows the OpenAI SDK exists. The
-pinned SDK is 0.28, whose surface is ``openai.ChatCompletion.create``; moving
-to the 1.x client means rewriting this file and nothing else.
+This is the only module in the project that knows the OpenAI SDK exists, so
+moving from the 0.28 module-level API to the 1.x client touched nothing else.
 """
 
 from __future__ import annotations
@@ -14,13 +13,14 @@ from typing import Any, Optional, Sequence
 
 import openai
 
-from .base import Completion, LLMRateLimited, LLMUnavailable, to_messages
+from .base import Completion, LLMError, LLMRateLimited, LLMUnavailable, to_messages
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-4"
 DEFAULT_RETRIES = 3
 DEFAULT_BACKOFF_SECONDS = 30.0
+REQUEST_TIMEOUT_SECONDS = 120.0
 
 
 class OpenAIProvider:
@@ -35,6 +35,7 @@ class OpenAIProvider:
         retries: int = DEFAULT_RETRIES,
         backoff_seconds: float = DEFAULT_BACKOFF_SECONDS,
         model_overrides: Optional[dict[str, str]] = None,
+        client: Any = None,
     ) -> None:
         self._api_key = api_key
         self.model = model or DEFAULT_MODEL
@@ -43,9 +44,20 @@ class OpenAIProvider:
         # purpose -> model, so a cheap model can serve chat while extraction
         # keeps the strong one, without touching a single call site.
         self.model_overrides = dict(model_overrides or {})
+        self._client = client
 
     def is_available(self) -> bool:
         return bool(self._api_key)
+
+    @property
+    def client(self):
+        if self._client is None:
+            # The SDK's own retries are off: rate limits are retried below
+            # with a longer backoff, and everything else fails fast.
+            self._client = openai.OpenAI(
+                api_key=self._api_key, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS
+            )
+        return self._client
 
     def complete(
         self,
@@ -70,13 +82,11 @@ class OpenAIProvider:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        openai.api_key = self._api_key
-
         last_error: Optional[Exception] = None
         for attempt in range(1, self.retries + 1):
             try:
-                response = openai.ChatCompletion.create(**payload)
-            except openai.error.RateLimitError as exc:
+                response = self.client.chat.completions.create(**payload)
+            except openai.RateLimitError as exc:
                 last_error = exc
                 logger.warning(
                     "OpenAI rate limit (attempt %d of %d): %s", attempt, self.retries, exc
@@ -84,6 +94,10 @@ class OpenAIProvider:
                 if attempt < self.retries:
                     time.sleep(self.backoff_seconds)
                 continue
+            except openai.OpenAIError as exc:
+                # Auth failures, timeouts and 5xx used to escape the seam as
+                # SDK exceptions, which every caller turned into a 500.
+                raise LLMError(f"OpenAI request failed: {exc}") from exc
 
             return _to_completion(response, payload["model"])
 
@@ -93,16 +107,16 @@ class OpenAIProvider:
 
 
 def _to_completion(response: Any, model: str) -> Completion:
-    text = response["choices"][0]["message"]["content"]
-    created = response.get("created") if hasattr(response, "get") else None
+    text = response.choices[0].message.content
+    created = getattr(response, "created", None)
     if isinstance(created, (int, float)):
         created_at = datetime.fromtimestamp(created, tz=timezone.utc)
     else:
         created_at = datetime.now(timezone.utc)
     return Completion(
         text=(text or "").strip(),
-        model=model,
+        model=getattr(response, "model", None) or model,
         created_at=created_at,
         provider="openai",
-        raw={"id": response.get("id")} if hasattr(response, "get") else {},
+        raw={"id": getattr(response, "id", None)},
     )

@@ -21,9 +21,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional, Sequence
 
-import PyPDF2
 import requests
 from django.conf import settings
+from pypdf import PdfReader
 
 from bnbu_core.json_utils import first_json_object
 from bnbu_core.llm import Completion, LLMError, Message, Purpose, get_llm_provider
@@ -193,7 +193,7 @@ def extract_text_chunks(document) -> tuple[list[str], int]:
         raise LeaseAnalysisError(f"Could not fetch the document: {exc}") from exc
 
     try:
-        reader = PyPDF2.PdfReader(io.BytesIO(response.content))
+        reader = PdfReader(io.BytesIO(response.content))
         pages = len(reader.pages)
         chunks = [
             "".join(

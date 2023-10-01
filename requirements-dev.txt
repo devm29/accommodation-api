@@ -1,0 +1,4 @@
+-r requirements.txt
+black==26.10.1
+flake8==7.5.0
+isort==9.0.2
