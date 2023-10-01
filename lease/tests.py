@@ -20,11 +20,7 @@ from rest_framework.test import APITestCase
 from bnbu_core.json_utils import as_mapping as _as_mapping
 from bnbu_core.llm import Completion, LLMError
 from bnbu_core.testing import ScriptedProvider, use_provider
-from lease.analysis import (
-    LeaseAnalysisError,
-    parse_completion,
-    verdict_from_prose,
-)
+from lease.analysis import LeaseAnalysisError, parse_completion, verdict_from_prose
 from lease.models import Document, Lease
 from lease.tasks import analyze_document_task
 
@@ -118,6 +114,36 @@ class DocumentAccessScopeTests(APITestCase):
             file_url="https://example.com/lease.pdf",
             gpt_response={"message": "summary", "status": "Approved", "created_time": "t"},
         )
+
+    def test_the_review_fields_cannot_be_written_by_the_client(self):
+        self.client.force_authenticate(user=self.owner)
+        url = reverse("document-detail", kwargs={"pk": self.document.pk})
+        response = self.client.patch(
+            url, {"status": "Approved", "analysis": {"verdict": "Approved"}}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.document.refresh_from_db()
+        self.lease.refresh_from_db()
+        self.assertEqual(self.document.status, Document.STATUS_PENDING)
+        self.assertIsNone(self.document.analysis)
+        self.assertNotEqual(self.lease.status, Lease.STATUS_APPROVED)
+
+    def test_the_bare_document_create_route_points_at_the_upload_routes(self):
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.post(reverse("document-list"), {"name": "x.pdf"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.assertIn("/api/leases/upload/", str(response.data))
+
+    def test_a_lease_created_through_the_list_route_belongs_to_the_caller(self):
+        # This was a 500: the serializer has no owner field and nothing set it.
+        self.client.force_authenticate(user=self.owner)
+        response = self.client.post(
+            reverse("lease-list"),
+            {"address1": "9 Elm St", "city": "Austin", "state": "TX", "zip_code": "78701"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Lease.objects.get(pk=response.data["id"]).user, self.owner)
 
     def test_owner_can_preview_their_document(self):
         self.client.force_authenticate(user=self.owner)
@@ -291,14 +317,16 @@ class StructuredAnalysisTests(SimpleTestCase):
         return parse_completion(Completion(text=text, model="m", provider="p"), pages=3)
 
     def test_a_json_answer_becomes_a_structured_result(self):
-        analysis = self._parse("""
+        analysis = self._parse(
+            """
             Here you go:
             {"verdict": "Rejected", "confidence": 0.9, "summary": "No subletting.",
              "financials": {"monthly_rent": "$2,450", "security_deposit": 4900},
              "clauses": [{"type": "subletting", "excerpt": "no subletting",
                           "risk": "high", "finding": "blocks the strategy",
                           "confidence": 0.95}]}
-            """)
+            """
+        )
         self.assertTrue(analysis.structured)
         self.assertEqual(analysis.verdict, "Rejected")
         self.assertEqual(analysis.confidence, 0.9)

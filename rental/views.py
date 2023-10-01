@@ -43,6 +43,9 @@ class RentalPropertyViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
     def get_base_queryset(self):
         return RentalProperty.objects.all().order_by("-created_at")
 
+    def perform_create(self, serializer):
+        serializer.save(user_id=self.request.user.id)
+
     @action(detail=False, methods=["post"], url_path="upload-properties")
     def upload_rental_properties(self, request):
         uploaded = request.FILES.get("file")

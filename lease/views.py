@@ -17,6 +17,7 @@ from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -66,6 +67,11 @@ class LeaseViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
         if self.action == "upload_lease":
             return LeaseUploadSerializer
         return LeaseSerializer
+
+    def perform_create(self, serializer):
+        # The serializer has no owner field, so POST /api/leases/ used to hit
+        # the NOT NULL constraint on user_id and answer 500.
+        serializer.save(user=self.request.user)
 
     @action(detail=False, methods=["post"], url_path="upload")
     def upload_lease(self, request):
@@ -178,6 +184,14 @@ class DocumentViewSet(OwnerScopedQuerysetMixin, viewsets.ModelViewSet):
 
     def get_base_queryset(self):
         return Document.objects.select_related("lease").order_by("-uploaded_at")
+
+    def create(self, request, *args, **kwargs):
+        # A document needs a stored file and a lease to version against; the
+        # bare create route had neither and failed on the NOT NULL lease_id.
+        raise MethodNotAllowed(
+            "POST",
+            detail="Upload documents with POST /api/leases/upload/ or /api/leases/{id}/revised/.",
+        )
 
     @action(detail=False, methods=["get"], url_path=r"preview/(?P<document_id>\d+)")
     def preview_document(self, request, document_id=None):

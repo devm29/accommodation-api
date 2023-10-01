@@ -29,6 +29,10 @@ class DocumentSerializer(serializers.ModelSerializer):
             "analysis",
             "chat_history",
         ]
+        # The review is the server's to write. With these writable, a PATCH
+        # could set status "Approved" - which Document.save() then mirrors
+        # onto the lease - or replace the analysis with anything at all.
+        read_only_fields = ["version", "status", "gpt_response", "analysis", "chat_history"]
 
 
 class DocumentSummarySerializer(serializers.ModelSerializer):

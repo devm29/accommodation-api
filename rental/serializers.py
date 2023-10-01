@@ -11,9 +11,11 @@ class RentalPropertySerializer(serializers.ModelSerializer):
     class Meta:
         model = RentalProperty
         fields = "__all__"
-        extra_fields = ["created_at_formatted"]  # Include additional formatted field
+        # The owner comes from the request. Writable, it let a caller create
+        # rows in someone else's account or hand their own rows away.
+        read_only_fields = ["user_id"]
 
     def get_created_at_formatted(self, obj):
         if obj.created_at:
-            return obj.created_at.strftime("%B %d, %Y")  # Format as "December 3, 2024"
+            return obj.created_at.strftime("%B %d, %Y")
         return None

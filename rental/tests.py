@@ -291,6 +291,31 @@ class RentalPropertyAccessTests(APITestCase):
             (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
         )
 
+    def test_a_created_property_belongs_to_the_caller(self):
+        self.client.force_authenticate(user=self.intruder)
+        response = self.client.post(
+            reverse("rental-properties-list"),
+            {
+                "location": "3 Main St",
+                "property_zillow_link": "https://example.com/3",
+                "batch_id": 9,
+                "user_id": self.owner.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            RentalProperty.objects.get(pk=response.data["id"]).user_id, self.intruder.id
+        )
+
+    def test_the_owner_cannot_be_reassigned(self):
+        self.client.force_authenticate(user=self.owner)
+        url = reverse("rental-properties-detail", kwargs={"pk": self.property.pk})
+        response = self.client.patch(url, {"user_id": self.intruder.id}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.property.refresh_from_db()
+        self.assertEqual(self.property.user_id, self.owner.id)
+
     def test_the_list_route_does_not_expose_other_users_rows(self):
         # IsAdminOrOwnData is object-level only, so it never ran on the list
         # route; every authenticated caller saw the whole table.
