@@ -1,0 +1,20 @@
+[flake8]
+max-line-length = 100
+max-complexity = 12
+extend-ignore =
+    # Black owns whitespace before ':' in slices.
+    E203,
+    # Line-break placement around binary operators is Black's call.
+    W503
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    project_venv,
+    build,
+    dist,
+    migrations,
+    staticfiles,
+    docs
+per-file-ignores =
+    bnbu_backend_api/settings.py:E501

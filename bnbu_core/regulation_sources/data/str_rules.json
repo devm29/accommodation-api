@@ -1,0 +1,54 @@
+{
+  "note": "A small curated table used as the first regulation source. Entries are illustrative summaries for the demo stack, not legal advice, and each carries the citation it was written from.",
+  "revised": "2026-09-23",
+  "locations": [
+    {
+      "location": "Kirkland, WA",
+      "aliases": ["kirkland wa", "kirkland washington", "kirkland"],
+      "status": "STR Allowed with Restrictions",
+      "confidence": 0.92,
+      "summary": "Short-term rentals are permitted with a registration and a primary-residence test.\n\n- The operator or an authorised agent must occupy the dwelling at least 245 days a year.\n- An annual short-term-rental registration is required and the number must appear in every listing.\n- Occupancy is capped at two guests per bedroom plus two.\n- Lodging tax applies; the platform collects it but the operator files the return.",
+      "citations": ["Kirkland Zoning Code KZC 5.10", "Kirkland Municipal Code Ch. 7.32"]
+    },
+    {
+      "location": "Austin, TX",
+      "aliases": ["austin tx", "austin texas", "austin"],
+      "status": "STR Allowed with Restrictions",
+      "confidence": 0.88,
+      "summary": "Licensed short-term rentals are legal; the licence type decides what is possible.\n\n- Type 1 covers owner-occupied properties, Type 2 non-owner-occupied, and Type 2 licences are capped by census tract.\n- The licence is annual and must be displayed in the listing.\n- Hotel occupancy tax is due to both the city and the state.\n- Assembly and event use of a licensed STR is prohibited.",
+      "citations": ["Austin City Code Ch. 25-2, Sub-chapter A"]
+    },
+    {
+      "location": "New York, NY",
+      "aliases": ["new york ny", "new york city", "nyc", "manhattan", "brooklyn"],
+      "status": "STR Not Allowed",
+      "confidence": 0.95,
+      "summary": "Whole-unit short stays are effectively banned.\n\n- Rentals under 30 days in a Class A multiple dwelling are unlawful unless the permanent occupant is present throughout.\n- Hosts must be registered with the Office of Special Enforcement, and platforms may not process a booking for an unregistered host.\n- No more than two guests at a time, and internal doors must remain unlocked.\n- The practical effect is that non-owner-occupied short-term letting is not viable.",
+      "citations": ["NYC Local Law 18 (2022)", "NY Multiple Dwelling Law 4(8)(a)"]
+    },
+    {
+      "location": "Scottsdale, AZ",
+      "aliases": ["scottsdale az", "scottsdale arizona", "scottsdale"],
+      "status": "STR Allowed",
+      "confidence": 0.86,
+      "summary": "State law pre-empts a local ban, so short-term rentals are broadly allowed.\n\n- A city licence and a transaction privilege tax licence are both required.\n- An emergency contact must be on file and reachable at all times.\n- Sex-offender screening of guests is required by ordinance.\n- Nuisance and occupancy rules are enforced through licence suspension rather than a ban.",
+      "citations": ["A.R.S. 9-500.39", "Scottsdale Revised Code Ch. 16, Art. XII"]
+    },
+    {
+      "location": "Santa Monica, CA",
+      "aliases": ["santa monica ca", "santa monica california", "santa monica"],
+      "status": "STR Not Allowed",
+      "confidence": 0.93,
+      "summary": "Only home-sharing is legal; unhosted short-term rental is not.\n\n- The host must live on the property and remain present during the stay.\n- A home-sharing licence and transient occupancy tax registration are required.\n- Vacation rentals - the whole unit, no host present, under 30 days - are prohibited outright.\n- Listings must show the licence number, and platforms are liable for unlicensed listings.",
+      "citations": ["Santa Monica Municipal Code Ch. 6.20"]
+    },
+    {
+      "location": "Nashville, TN",
+      "aliases": ["nashville tn", "nashville tennessee", "nashville", "davidson county"],
+      "status": "STR Allowed with Restrictions",
+      "confidence": 0.84,
+      "summary": "Permitted by permit, with the non-owner-occupied category tightly limited.\n\n- Owner-occupied (Type 2) permits are available in most residential zoning.\n- Non-owner-occupied (Type 1) permits are not issued in one- and two-family residential zoning.\n- Permits are annual, non-transferable on sale, and capped at 3% of residential units per census tract.\n- Occupancy is capped at four adults plus two per bedroom above two.",
+      "citations": ["Metro Code 17.16.250(E)"]
+    }
+  ]
+}
