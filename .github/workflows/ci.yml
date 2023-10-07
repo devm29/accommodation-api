@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install black isort flake8
+      - name: isort
+        run: isort --check-only .
+      - name: black
+        run: black --check .
+      - name: flake8
+        run: flake8 .
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dev_user
+          POSTGRES_PASSWORD: dev_password
+          POSTGRES_DB: dev_database
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U dev_user -d dev_database"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://dev_user:dev_password@localhost:5432/dev_database
+      SECRET_KEY: ci-only-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Check for missing migrations
+        run: python manage.py makemigrations --check --dry-run
+      - name: Run the test suite
+        run: python manage.py test
